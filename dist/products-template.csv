@@ -1,0 +1,3 @@
+name,sku,category,sale_price,purchase_price,stock,alert_threshold,unit,description
+Lit 2 places,LIT-200,Lits,185000,110000,7,2,unité,Lit sur mesure
+Armoire 3 portes,ARM-300,Armoires,240000,150000,3,2,unité,Armoire
