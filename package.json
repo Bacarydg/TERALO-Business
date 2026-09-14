@@ -15,6 +15,7 @@
     "cap:open:ios": "npx cap open ios"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
     "@capacitor/core": "^8.0.0",
     "@supabase/supabase-js": "^2.57.4",
     "lucide-react": "^0.468.0",
@@ -29,6 +30,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "eslint": "^9.35.0",
     "eslint-plugin-react-hooks": "^6.1.1",
+    "typescript": "^7.0.2",
     "vite": "^7.1.5"
   }
 }
