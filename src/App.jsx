@@ -1,29 +1,79 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
+import { 
   LayoutDashboard, ShoppingCart, Package, Users, WalletCards, FileText, Settings,
   Menu, X, Search, Bell, ChevronDown, Plus, ArrowUpRight, ArrowDownRight,
   TrendingUp, AlertTriangle, MoreHorizontal, Receipt, Upload, Download, LogOut,
-  Building2, Sparkles, CheckCircle2, CircleDollarSign, RefreshCw, Printer, MessageCircle
+  Building2, Sparkles, CheckCircle2, CircleDollarSign, RefreshCw, Printer, MessageCircle,
+  Clock
 } from "lucide-react";
+
 import Papa from "papaparse";
 import { getSession, signIn, signUp, signOut, getAppData, saveEntity, deleteEntity, uploadAsset } from "./lib/api";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { money, number, dateLabel, uid, invoiceNo, todayISO } from "./utils";
+import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip } from "recharts";
+
 
 const nav = [
   ["dashboard","Tableau de bord",LayoutDashboard],
   ["pos","Caisse / Vente",ShoppingCart],
   ["products","Produits & Stocks",Package],
   ["customers","Clients",Users],
+  ["invoices", "Factures", Receipt],
   ["quotes","Devis",FileText],
   ["cash","Trésorerie",WalletCards],
   ["settings","Paramètres",Settings]
 ];
 
+const categoriesParSecteur = {
+  "Electronique et Electromenager": [
+    "Smartphones",
+    "Tablettes",
+    "Chargeurs et Câbles",
+    "Casques et Ecouteurs",
+    "Power Bank et Batteries",
+    "Montres Connectees",
+    "Pochettes et Protections",
+    "Enceintes Bluetooth et Audio",
+    "Televiseurs et Ecrans",
+    "Refrigerateurs et Congelateurs",
+    "Fers a repasser",
+    "Bouilloires et Cafetieres",
+    "Ventilateurs",
+    "Climatiseurs",
+    "Accessoires et Petits appareils menagers"
+  ],
+  "Artisanat et Menuiserie": [
+    "Lits",
+    "Armoires",
+    "Tables",
+    "Portes",
+    "Salons et Fauteuils",
+    "Comptoirs et Bureaux",
+    "Sculptures et Objets d'art",
+    "Quincaillerie et Visserie",
+    "Bois et Materiaux bruts"
+  ],
+  "Alimentation et Commerce General": [
+    "Produits frais et Vivres",
+    "Boissons et Jus locaux",
+    "Epicerie et Condiments",
+    "Produits d'entretien et Nettoyage",
+    "Emballages et Consommables"
+  ],
+  "Mode et Vetements": [
+    "Pret-a-porter Homme et Femme",
+    "Tissus et Pagnes traditionnels",
+    "Chaussures et Sneakers",
+    "Sacs et Maroquinerie",
+    "Accessoires de mode et Bijoux"
+  ]
+};
+
 const sectors = ["Commerce général","Électronique & High-Tech","Artisanat & Menuiserie","Restauration","Immobilier","Aluminium","Soins & Beauté"];
 const plans = ["Basic","Standard","Premium"];
 
-const initialProduct = {name:"",sku:"",category:"",sale_price:0,purchase_price:0,stock:0,alert_threshold:2,unit:"unité",description:"",is_active:true};
+const initialProduct = {name:"",sku:"",category:"",sale_price:0,purchase_price:0,stock:0,alert_threshold:5,unit:"unité",description:"",is_active:true};
 
 export default function App() {
   // Tous les hooks sont déclarés de manière inconditionnelle avant le moindre return.
@@ -329,6 +379,7 @@ export default function App() {
           {page === "pos" && <POS data={data} persist={persist}/>} 
           {page === "products" && <Products data={data} persist={persist} remove={remove}/>} 
           {page === "customers" && <Customers data={data} persist={persist} remove={remove}/>} 
+          {page === "invoices" && <Invoices data={data} persist={persist} remove={remove} />}
           {page === "quotes" && <Quotes data={data} persist={persist} setPage={setPage}/>} 
           {page === "cash" && <Cash data={data} persist={persist}/>} 
           {page === "settings" && <SettingsPage data={data} persist={persist} session={session}/>} 
@@ -438,32 +489,535 @@ function PageHead({title,subtitle,actions}) {
   return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div><div className="head-actions">{actions}</div></div>
 }
 
-function Dashboard({data,setPage}) {
-  const salesToday=data.sales.filter(s=>new Date(s.created_at).toDateString()===new Date().toDateString());
-  const revenue=data.sales.reduce((a,s)=>a+Number(s.total||0),0);
-  const cashIn=data.cash_entries.filter(e=>e.type==="income").reduce((a,e)=>a+Number(e.amount||0),0);
-  const cashOut=data.cash_entries.filter(e=>e.type==="expense").reduce((a,e)=>a+Number(e.amount||0),0);
-  const low=data.products.filter(p=>Number(p.stock)<=Number(p.alert_threshold));
-  const chart=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-6+i); const sum=data.sales.filter(s=>new Date(s.created_at).toDateString()===d.toDateString()).reduce((a,s)=>a+Number(s.total),0);return {day:d.toLocaleDateString("fr-FR",{weekday:"short"}).replace(".",""),value:sum}});
-  return <div>
-    <PageHead title="Bonjour, bienvenue 👋" subtitle={`Voici la santé de ${data.merchant?.business_name||"votre entreprise"} aujourd'hui.`} actions={<><button className="btn btn-secondary" onClick={()=>setPage("quotes")}><FileText size={16}/> Nouveau devis</button><button className="btn btn-primary" onClick={()=>setPage("pos")}><Plus size={17}/> Nouvelle vente</button></>}/>
-    <div className="status-strip"><span><i className="live-dot"/> Système opérationnel</span><span>Dernière synchronisation : à l'instant</span><span className="demo-tag">Mode {isSupabaseConfigured?"SaaS":"Démo"}</span></div>
-    <div className="metrics">
-      <Metric title="Chiffre d'affaires" value={money(revenue)} delta="+12,8%" icon={TrendingUp} tone="green"/>
-      <Metric title="Encaissements" value={money(cashIn)} delta="+8,4%" icon={CircleDollarSign} tone="blue"/>
-      <Metric title="Trésorerie nette" value={money(cashIn-cashOut)} delta="+5,2%" icon={WalletCards} tone="violet"/>
-      <Metric title="Créances clients" value={money(data.sales.filter(s=>s.status==="credit").reduce((a,s)=>a+Number(s.total),0))} delta="4 clients" icon={Users} tone="orange"/>
+const isSameDay = (a, b) => 
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+function Invoices({ data, persist }) {
+  const [selectedInvoice, setSelectedInvoice] = React.useState(null);
+  const salesList = data?.sales || [];
+
+  return (
+    <div className="page-container">
+      <PageHead title="Factures" subtitle="Consultez l'historique de toutes vos ventes et tickets." />
+      
+      <div className="table-responsive" style={{ marginTop: "20px" }}>
+        <table className="data-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #eee", textAlign: "left" }}>
+              <th style={{ padding: "12px" }}>N° Facture</th>
+              <th style={{ padding: "12px" }}>Client</th>
+              <th style={{ padding: "12px" }}>Date</th>
+              <th style={{ padding: "12px" }}>Total</th>
+              <th style={{ padding: "12px" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {salesList.length === 0 ? (
+              <tr>
+                <td colSpan="5" style={{ padding: "20px", textAlign: "center", color: "#888" }}>
+                  Aucune facture enregistrée pour le moment.
+                </td>
+              </tr>
+            ) : (
+              salesList.map((sale) => (
+                <tr key={sale.id || sale.invoice_number} style={{ borderBottom: "1px solid #f5f5f5" }}>
+                  <td style={{ padding: "12px", fontWeight: "600" }}>{sale.invoice_number}</td>
+                  <td style={{ padding: "12px" }}>{sale.client_name || "Client comptoir"}</td>
+                  <td style={{ padding: "12px" }}>{sale.created_at ? new Date(sale.created_at).toLocaleDateString('fr-FR') : "Aujourd'hui"}</td>
+                  <td style={{ padding: "12px", fontWeight: "600" }}>{money ? money(sale.total) : sale.total + " F CFA"}</td>
+                  <td style={{ padding: "12px" }}>
+                    <button 
+                      className="btn-sm" 
+                      onClick={() => setSelectedInvoice(sale)}
+                      style={{ padding: "6px 12px", cursor: "pointer" }}
+                    >
+                      Voir le ticket
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {selectedInvoice && (
+        <ReceiptModal 
+          cart={selectedInvoice.items || []} 
+          total={selectedInvoice.total} 
+          merchant={data.merchant}
+          clientDetails={{
+            name: selectedInvoice.client_name,
+            phone: selectedInvoice.client_phone,
+            address: selectedInvoice.client_address
+          }}
+          close={() => setSelectedInvoice(null)}
+        />
+      )}
     </div>
-    <div className="grid-2">
-      <section className="panel chart-panel"><div className="panel-head"><div><h3>Évolution des ventes</h3><p>Les 7 derniers jours</p></div><select><option>7 derniers jours</option><option>30 derniers jours</option></select></div><SalesChart data={chart}/></section>
-      <section className="panel"><div className="panel-head"><div><h3>Activité récente</h3><p>Dernières opérations</p></div><button className="text-btn" onClick={()=>setPage("pos")}>Voir tout</button></div><div className="activity-list">{data.sales.slice(0,5).map(s=><div className="activity" key={s.id}><div className="activity-icon"><Receipt size={16}/></div><div className="activity-main"><strong>{s.invoice_number}</strong><span>{s.payment_method} · {dateLabel(s.created_at)}</span></div><b>{money(s.total)}</b></div>)}</div></section>
+  );
+}  
+
+function Dashboard({ data, setPage = () => {} }) {
+  // Sécurisation des données
+  const sales = data?.sales || [];
+  const cashEntries = data?.cash_entries || [];
+  const products = data?.products || [];
+
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  const salesToday = useMemo(
+    () => sales.filter((s) => isSameDay(new Date(s.created_at), now)),
+    [sales]
+  );
+  const salesYesterday = useMemo(
+    () => sales.filter((s) => isSameDay(new Date(s.created_at), yesterday)),
+    [sales]
+  );
+
+  const revenueToday = salesToday.reduce((a, s) => a + Number(s.total || 0), 0);
+  const revenueYesterday = salesYesterday.reduce((a, s) => a + Number(s.total || 0), 0);
+  const revenueDelta =
+    revenueYesterday > 0
+      ? ((revenueToday - revenueYesterday) / revenueYesterday) * 100
+      : revenueToday > 0
+      ? 100
+      : 0;
+
+  const cashIn = cashEntries
+    .filter((e) => e.type === "income")
+    .reduce((a, e) => a + Number(e.amount || 0), 0);
+  const cashOut = cashEntries
+    .filter((e) => e.type === "expense")
+    .reduce((a, e) => a + Number(e.amount || 0), 0);
+    
+  const credits = sales
+    .filter((s) => s.status === "credit")
+    .reduce((a, s) => a + Number(s.total || 0), 0);
+  
+  const creditClientsCount = new Set(
+    sales.filter((s) => s.status === "credit").map((s) => s.customer_id || s.invoice_number)
+  ).size;
+
+  const low = products.filter((p) => Number(p.stock) <= Number(p.alert_threshold));
+
+  const chart = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(now);
+        d.setDate(now.getDate() - 6 + i);
+        const sum = sales
+          .filter((s) => isSameDay(new Date(s.created_at), d))
+          .reduce((a, s) => a + Number(s.total || 0), 0);
+        return {
+          day: d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", ""),
+          value: sum,
+        };
+      }),
+    [sales]
+  );
+
+  const hourly = useMemo(() => {
+    const buckets = Array.from({ length: 12 }, (_, i) => ({ h: 8 + i, value: 0 }));
+    salesToday.forEach((s) => {
+      const h = new Date(s.created_at).getHours();
+      const b = buckets.find((x) => x.h === h);
+      if (b) b.value += Number(s.total || 0);
+      else if (h < 8) buckets[0].value += Number(s.total || 0);
+      else buckets[buckets.length - 1].value += Number(s.total || 0);
+    });
+    return buckets;
+  }, [salesToday]);
+
+  const lastSaleTime = salesToday.length
+    ? new Date(salesToday[salesToday.length - 1].created_at).toLocaleTimeString("fr-FR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+
+  return (
+    <div className="trlo-dashboard-root">
+      <style>{`
+        .trlo-dashboard-root {
+          display: flex;
+          flex-direction: column;
+          gap: 22px;
+        }
+        .trlo-hero-banner {
+          position: relative;
+          background: #0E4A34;
+          color: #fff;
+          border-radius: 20px;
+          padding: 28px 32px;
+          overflow: hidden;
+          display: grid;
+          grid-template-columns: 1.3fr 1fr;
+          gap: 24px;
+          box-shadow: 0 10px 30px -10px rgba(14, 74, 52, 0.25);
+        }
+        .trlo-hero-banner::before {
+          content: '';
+          position: absolute; inset: 0;
+          background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.08) 1.5px, transparent 0);
+          background-size: 20px 20px;
+          opacity: 0.6;
+          pointer-events: none;
+        }
+        .trlo-hero-left { position: relative; z-index: 1; }
+        .trlo-hero-eyebrow {
+          font-size: 13px; color: rgba(255,255,255,0.75); font-weight: 500;
+          text-transform: uppercase; letter-spacing: 0.04em;
+        }
+        .trlo-hero-value {
+          font-family: 'Space Grotesk', sans-serif;
+          font-size: clamp(32px, 4.5vw, 48px);
+          font-weight: 700; line-height: 1.1; letter-spacing: -0.02em;
+          margin: 6px 0 14px;
+        }
+        .trlo-hero-meta {
+          display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        }
+        .trlo-hero-pill {
+          display: inline-flex; align-items: center; gap: 5px;
+          background: #D6A23C; color: #2B1C05; font-weight: 700;
+          font-size: 12.5px; padding: 4px 10px; border-radius: 100px;
+        }
+        .trlo-hero-pill.negative { background: rgba(255,255,255,0.15); color: #fff; }
+        .trlo-hero-sub-pill {
+          background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);
+          font-size: 12.5px; padding: 4px 10px; border-radius: 100px;
+          display: inline-flex; align-items: center; gap: 5px;
+        }
+        .trlo-hero-right {
+          position: relative; z-index: 1;
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 14px;
+          padding: 14px 16px 4px;
+          display: flex; flex-direction: column; justify-content: center;
+        }
+        .trlo-hero-right-label { font-size: 12px; color: rgba(255,255,255,0.65); margin-bottom: 2px; }
+
+        .trlo-metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+        }
+        .trlo-metric-card {
+          background: var(--panel, #FFFFFF);
+          border: 1px solid var(--line, rgba(20, 42, 32, 0.1));
+          border-radius: 16px;
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+          cursor: pointer;
+        }
+        .trlo-metric-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(0,0,0,0.04);
+        }
+        .trlo-metric-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          color: var(--ink-soft, #4B5D53);
+        }
+        .trlo-metric-title { font-size: 13px; font-weight: 500; }
+        .trlo-metric-val {
+          font-family: 'Space Grotesk', sans-serif;
+          font-size: 22px;
+          font-weight: 700;
+          color: var(--ink, #142A20);
+        }
+        .trlo-metric-footer {
+          font-size: 12px;
+          color: var(--ink-soft, #4B5D53);
+        }
+
+        @media (max-width: 1024px) {
+          .trlo-hero-banner { grid-template-columns: 1fr; }
+          .trlo-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 600px) {
+          .trlo-metrics-grid { grid-template-columns: 1fr; }
+        }
+      `}</style>
+
+      <PageHead
+        title="Bonjour 👋"
+        subtitle={`Voici la santé de ${data?.merchant?.business_name || "votre entreprise"} — ${now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}.`}
+        actions={
+          <>
+            <button className="btn btn-secondary" onClick={() => setPage("quotes")}>
+              <FileText size={16} /> Nouveau devis
+            </button>
+            <button className="btn btn-primary" onClick={() => setPage("pos")}>
+              <Plus size={17} /> Nouvelle vente
+            </button>
+          </>
+        }
+      />
+
+      <div className="status-strip">
+        <span><i className="live-dot" /> Système opérationnel</span>
+        <span>Dernière synchronisation : à l'instant</span>
+        <span className="demo-tag">Mode {typeof isSupabaseConfigured !== 'undefined' && isSupabaseConfigured ? "SaaS" : "Démo"}</span>
+      </div>
+
+      <div className="trlo-hero-banner">
+        <div className="trlo-hero-left">
+          <span className="trlo-hero-eyebrow">Chiffre d'affaires réalisé aujourd'hui</span>
+          <h2 className="trlo-hero-value">{money(revenueToday)}</h2>
+          <div className="trlo-hero-meta">
+            <span className={`trlo-hero-pill ${revenueDelta < 0 ? "negative" : ""}`}>
+              {revenueDelta >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+              {revenueDelta >= 0 ? "+" : ""}
+              {revenueDelta.toFixed(1).replace(".", ",")}% vs hier
+            </span>
+            <span className="trlo-hero-sub-pill">
+              <Receipt size={13} /> {salesToday.length} vente{salesToday.length > 1 ? "s" : ""}
+            </span>
+            {lastSaleTime && (
+              <span className="trlo-hero-sub-pill">
+                <Clock size={13} /> dernière à {lastSaleTime}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="trlo-hero-right">
+          <span className="trlo-hero-right-label">Répartition horaire (Aujourd'hui)</span>
+          <ResponsiveContainer width="100%" height={85}>
+            <AreaChart data={hourly} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="heroAreaFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#D6A23C" stopOpacity={0.6} />
+                  <stop offset="100%" stopColor="#D6A23C" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="h" hide />
+              <Tooltip
+                cursor={false}
+                contentStyle={{ background: "#0E4A34", border: "none", borderRadius: 8, fontSize: 12, color: "#fff" }}
+                labelFormatter={(h) => `${h}h`}
+                formatter={(v) => [money(v), "Ventes"]}
+              />
+              <Area type="monotone" dataKey="value" stroke="#D6A23C" strokeWidth={2} fill="url(#heroAreaFill)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="trlo-metrics-grid">
+        <div className="trlo-metric-card" onClick={() => setPage("cash")}>
+          <div className="trlo-metric-header">
+            <span className="trlo-metric-title">Encaissements</span>
+            <CircleDollarSign size={18} className="text-blue" />
+          </div>
+          <div className="trlo-metric-val">{money(cashIn)}</div>
+          <div className="trlo-metric-footer">Ce mois</div>
+        </div>
+
+        <div className="trlo-metric-card" onClick={() => setPage("cash")}>
+          <div className="trlo-metric-header">
+            <span className="trlo-metric-title">Trésorerie nette</span>
+            <WalletCards size={18} className="text-violet" />
+          </div>
+          <div className="trlo-metric-val">{money(cashIn - cashOut)}</div>
+          <div className="trlo-metric-footer">{money(cashOut)} de sorties</div>
+        </div>
+
+        <div className="trlo-metric-card" onClick={() => setPage("customers")}>
+          <div className="trlo-metric-header">
+            <span className="trlo-metric-title">Créances clients</span>
+            <Users size={18} className="text-orange" />
+          </div>
+          <div className="trlo-metric-val">{money(credits)}</div>
+          <div className="trlo-metric-footer">{creditClientsCount} client{creditClientsCount > 1 ? "s" : ""} concerné{creditClientsCount > 1 ? "s" : ""}</div>
+        </div>
+
+        <div className="trlo-metric-card" onClick={() => setPage("products")}>
+          <div className="trlo-metric-header">
+            <span className="trlo-metric-title">Stock à surveiller</span>
+            <Package size={18} className="text-red" />
+          </div>
+          <div className="trlo-metric-val">{number(low.length)}</div>
+          <div className="trlo-metric-footer">{low.length ? "article(s) sous le seuil" : "Tous les stocks sont au vert"}</div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <section className="panel chart-panel">
+          <div className="panel-head">
+            <div>
+              <h3>Évolution des ventes</h3>
+              <p>Les 7 derniers jours</p>
+            </div>
+            <select style={{ background: 'var(--cream)', border: '1px solid var(--line)', borderRadius: '8px', padding: '4px 8px', fontSize: '12px' }}>
+              <option>7 derniers jours</option>
+              <option>30 derniers jours</option>
+            </select>
+          </div>
+          <SalesChart data={chart} />
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h3>Activité récente</h3>
+              <p>Dernières opérations</p>
+            </div>
+            <button className="text-btn" onClick={() => setPage("pos")}>Voir tout</button>
+          </div>
+          <div className="activity-list">
+            {sales.slice(0, 5).map((s) => (
+              <div className="activity" key={s.id}>
+                <div className="activity-icon">
+                  <Receipt size={16} />
+                </div>
+                <div className="activity-main">
+                  <strong>{s.invoice_number}</strong>
+                  <span>{s.payment_method} · {dateLabel(s.created_at)}</span>
+                </div>
+                <b>{money(s.total)}</b>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid-3">
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h3>Stock à surveiller</h3>
+              <p>{low.length} article(s) sous le seuil</p>
+            </div>
+            <button className="text-btn" onClick={() => setPage("products")}>Gérer</button>
+          </div>
+          {low.length ? (
+            <div className="stock-list">
+              {low.map((p) => (
+                <div className="stock-row" key={p.id}>
+                  <div className="mini-product">{p.name ? p.name.slice(0, 1) : "?"}</div>
+                  <div>
+                    <strong>{p.name}</strong>
+                    <span>{p.category || "Sans catégorie"}</span>
+                  </div>
+                  <b className="danger-text">{number(p.stock)} {p.unit}</b>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty icon={Package} text="Tous les stocks sont au vert." />
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h3>Performance métier</h3>
+              <p>{data?.merchant?.sector}</p>
+            </div>
+          </div>
+          <div className="sector-card">
+            <div className="sector-icon">
+              <Building2 size={22} />
+            </div>
+            <div>
+              <strong>
+                {data?.merchant?.sector === "Artisanat & Menuiserie" ? "Chantiers & fabrication" : "Activité commerciale"}
+              </strong>
+              <p>Suivez les commandes, devis et ventes depuis votre espace.</p>
+            </div>
+          </div>
+          <div className="quick-grid">
+            <button onClick={() => setPage("quotes")}><FileText /> Devis</button>
+            <button onClick={() => setPage("customers")}><Users /> Clients</button>
+            <button onClick={() => setPage("cash")}><WalletCards /> Trésorerie</button>
+            <button onClick={() => setPage("products")}><Package /> Stock</button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h3>Objectif mensuel</h3>
+              <p>Septembre 2026</p>
+            </div>
+            <MoreHorizontal size={18} />
+          </div>
+          <div className="goal">
+            <div className="goal-ring">
+              <strong>68%</strong>
+              <span>atteint</span>
+            </div>
+            <div>
+              <strong>{money(1250000)}</strong>
+              <span>sur objectif de {money(1850000)}</span>
+              <div className="progress">
+                <i style={{ width: "68%" }} />
+              </div>
+            </div>
+          </div>
+          <div className="goal-note">
+            <ArrowUpRight size={16} /> Encore {money(600000)} pour atteindre votre objectif.
+          </div>
+          {/* Section Historique des Factures */}
+      <section className="panel" style={{ marginTop: "20px" }}>
+        <div className="panel-head">
+          <div>
+            <h3>Historique des factures</h3>
+            <p>Retrouvez toutes vos ventes validées</p>
+          </div>
+        </div>
+        <div style={{ overflowX: "auto", marginTop: "15px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #eee", color: "#666", fontSize: "13px" }}>
+                <th style={{ padding: "10px" }}>N° Facture</th>
+                <th style={{ padding: "10px" }}>Client</th>
+                <th style={{ padding: "10px" }}>Téléphone</th>
+                <th style={{ padding: "10px" }}>Total</th>
+                <th style={{ padding: "10px" }}>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sales.length === 0 ? (
+                <tr>
+                  <td colSpan="5" style={{ textAlign: "center", padding: "20px", color: "#888" }}>
+                    Aucune facture enregistrée pour le moment.
+                  </td>
+                </tr>
+              ) : (
+                sales.map((sale, index) => (
+                  <tr key={index} style={{ borderBottom: "1px solid #f5f5f5", fontSize: "14px" }}>
+                    <td style={{ padding: "10px", fontWeight: "500" }}>{sale.invoice_number || "N/A"}</td>
+                    <td style={{ padding: "10px" }}>{sale.client_name || "Client comptoir"}</td>
+                    <td style={{ padding: "10px" }}>{sale.client_phone || "-"}</td>
+                    <td style={{ padding: "10px", fontWeight: "600", color: "#0E4A34" }}>
+                      {money ? money(sale.total) : sale.total + " F CFA"}
+                    </td>
+                    <td style={{ padding: "10px", color: "#666" }}>
+                      {sale.created_at ? new Date(sale.created_at).toLocaleDateString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "Récemment"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+        </section>
+      </div>
     </div>
-    <div className="grid-3">
-      <section className="panel"><div className="panel-head"><div><h3>Stock à surveiller</h3><p>{low.length} article(s) sous le seuil</p></div><button className="text-btn" onClick={()=>setPage("products")}>Gérer</button></div>{low.length?<div className="stock-list">{low.map(p=><div className="stock-row" key={p.id}><div className="mini-product">{p.name.slice(0,1)}</div><div><strong>{p.name}</strong><span>{p.category||"Sans catégorie"}</span></div><b className="danger-text">{number(p.stock)} {p.unit}</b></div>)}</div>:<Empty icon={Package} text="Tous les stocks sont au vert."/>}</section>
-      <section className="panel"><div className="panel-head"><div><h3>Performance métier</h3><p>{data.merchant?.sector}</p></div></div><div className="sector-card"><div className="sector-icon"><Building2 size={22}/></div><div><strong>{data.merchant?.sector==="Artisanat & Menuiserie"?"Chantiers & fabrication":"Activité commerciale"}</strong><p>Suivez les commandes, devis et ventes depuis votre espace.</p></div></div><div className="quick-grid"><button onClick={()=>setPage("quotes")}><FileText/> Devis</button><button onClick={()=>setPage("customers")}><Users/> Clients</button><button onClick={()=>setPage("cash")}><WalletCards/> Trésorerie</button><button onClick={()=>setPage("products")}><Package/> Stock</button></div></section>
-      <section className="panel"><div className="panel-head"><div><h3>Objectif mensuel</h3><p>Septembre 2026</p></div><MoreHorizontal size={18}/></div><div className="goal"><div className="goal-ring"><strong>68%</strong><span>atteint</span></div><div><strong>{money(1250000)}</strong><span>sur objectif de {money(1850000)}</span><div className="progress"><i style={{width:"68%"}}/></div></div></div><div className="goal-note"><ArrowUpRight size={16}/> Encore {money(600000)} pour atteindre votre objectif.</div></section>
-    </div>
-  </div>
+  );
 }
 
 function Metric({title,value,delta,icon:Icon,tone}) { return <div className="metric"><div className={"metric-icon "+tone}><Icon size={20}/></div><div className="metric-copy"><span>{title}</span><strong>{value}</strong><small><ArrowUpRight size={12}/>{delta} <em>vs mois dernier</em></small></div></div> }
@@ -482,16 +1036,22 @@ function POS({data,persist}) {
   const [payment,setPayment]=useState("Espèces");
   const [discount,setDiscount]=useState(0);
   const [customer,setCustomer]=useState("");
-  const [showPrint,setShowPrint]=useState(false);
+  const [showPrint, setShowPrint] = useState(false);
+  const [currentSaleItems, setCurrentSaleItems] = useState([]);
+  const [activeSale, setActiveSale] = useState(null);
+  const [clientDetails, setClientDetails] = useState({ name: "", phone: "", address: "" });
   const categories=["Tous",...new Set(data.products.map(p=>p.category).filter(Boolean))];
   const filtered=data.products.filter(p=>p.is_active && (category==="Tous"||p.category===category) && p.name.toLowerCase().includes(search.toLowerCase()));
   const subtotal=cart.reduce((a,x)=>a+x.sale_price*x.qty,0);
   const total=Math.max(0,subtotal-Number(discount||0));
   function add(p){setCart(c=>{const found=c.find(x=>x.id===p.id);return found?c.map(x=>x.id===p.id?{...x,qty:x.qty+1}:x):[...c,{...p,qty:1}]})}
-  function change(id,q){setCart(c=>c.map(x=>x.id===id?{...x,qty:Math.max(1,q)}:x))}
+  function change(id, q) {
+  setCart(c => q <= 0 ? c.filter(x => x.id !== id) : c.map(x => x.id === id ? { ...x, qty: q } : x));
+}
+
 async function checkout(){
     if(!cart.length) return; 
-
+    setCurrentSaleItems([...cart]);
     // 1. Mettre à jour le stock de chaque produit acheté en envoyant aussi son nom
     for (const item of cart) {
       const newStock = Math.max(0, (item.stock || item.quantity || 0) - item.qty);
@@ -503,23 +1063,99 @@ async function checkout(){
       });
     }
 
-    // 2. Enregistrer la vente avec son numéro de facture et son total
-    await persist("sale", { 
-      total: total, 
-      invoice_number: "FAC-" + Math.floor(100000 + Math.random() * 900000) 
-    }); 
+  // 2. Enregistrer la vente avec son numéro de facture et son total
+const savedSale = await persist("sale", {
+  total: total,
+  invoice_number: "FAC-" + Math.floor(100000 + Math.random() * 900000),
+  client_name: clientDetails.name,
+  client_phone: clientDetails.phone,
+  client_address: clientDetails.address,
+  items: [...cart], // On sauvegarde une copie des articles du panier
+});
 
-    // 3. Ouvrir la modale de la facture
-    setShowPrint(true);
-  }
+// 3. Stocker la vente active pour l'impression, vider le panier et ouvrir la modale
+setActiveSale(savedSale); // (Assure-toi d'avoir un state activeSale ou d'utiliser les données retournées)
+setCart([]);
+setShowPrint(true);
+
+}
   return <div><PageHead title="Caisse" subtitle="Vendez rapidement, encaissez et imprimez vos tickets." actions={<div className="pos-mode"><span className="active">Vente</span><span>Retour</span></div>}/><div className="pos-layout">
     <section className="panel catalog-panel"><div className="pos-search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher un article, SKU…"/><kbd>⌘ K</kbd></div><div className="chips">{categories.map(c=><button key={c} className={category===c?"active":""} onClick={()=>setCategory(c)}>{c}</button>)}</div><div className="product-grid">{filtered.map(p=><button className="product-tile" key={p.id} onClick={()=>add(p)}><div className="product-image">{p.image_url?<img src={p.image_url} alt=""/>:<span>{p.name.slice(0,1)}</span>}</div><div><strong>{p.name}</strong><small>{p.category||"Sans catégorie"}</small></div><b>{money(p.sale_price)}</b><em>{number(p.stock)} en stock</em></button>)}</div></section>
-    <aside className="panel cart-panel"><div className="cart-head"><div><h3>Panier</h3><p>{cart.reduce((a,x)=>a+x.qty,0)} article(s)</p></div><button className="text-btn" onClick={()=>setCart([])}>Vider</button></div>{cart.length?<div className="cart-items">{cart.map(x=><div className="cart-item" key={x.id}><div className="cart-avatar">{x.name.slice(0,1)}</div><div className="cart-info"><strong>{x.name}</strong><span>{money(x.sale_price)}</span><div className="qty"><button onClick={()=>change(x.id,x.qty-1)}>−</button><b>{x.qty}</b><button onClick={()=>change(x.id,x.qty+1)}>+</button></div></div><b>{money(x.sale_price*x.qty)}</b></div>)}</div>:<Empty icon={ShoppingCart} text="Votre panier est vide"/>}
-    <div className="cart-bottom"><label className="field"><span>Client</span><select value={customer} onChange={e=>setCustomer(e.target.value)}><option value="">Client comptant</option>{data.customers.map(c=><option value={c.id} key={c.id}>{c.name} · {c.phone}</option>)}</select></label><label className="field"><span>Remise</span><input type="number" min="0" value={discount} onChange={e=>setDiscount(e.target.value)}/></label><div className="payment-grid">{["Espèces","Wave","Orange Money","Crédit client"].map(p=><button key={p} className={payment===p?"active":""} onClick={()=>setPayment(p)}>{p}</button>)}</div><div className="total-line"><span>Sous-total</span><b>{money(subtotal)}</b></div><div className="total-line grand"><span>Total à payer</span><strong>{money(total)}</strong></div><button className="btn btn-primary btn-lg full" disabled={!cart.length} onClick={checkout}><CheckCircle2 size={18}/> Encaisser {money(total)}</button><div className="receipt-actions"><button onClick={()=>setShowPrint(true)} disabled={!cart.length}><Printer size={15}/> Aperçu ticket</button><button><Download size={15}/> PDF</button></div></div></aside>
-  </div>{showPrint&&<ReceiptModal cart={cart} total={total} merchant={data.merchant} close={()=>setShowPrint(false)}/>}</div>
+    <aside className="panel cart-panel"><div className="cart-head"><div><h3>Panier</h3><p>{cart.reduce((a,x)=>a+x.qty,0)} article(s)</p></div><button className="text-btn" onClick={()=>setCart([])}>Vider</button></div>{cart.length?<div className="cart-items">{cart.map(x=><div className="cart-item" key={x.id}><div className="cart-avatar">{x.name.slice(0,1)}</div><div className="cart-info"><strong>{x.name}</strong><span>{money(x.sale_price)}</span><div className="qty"><button onClick={()=>change(x.id,x.qty-1)}>−</button><b>{x.qty}</b><button onClick={()=>change(x.id,x.qty+1)}>+</button></div></div><b>{money(x.sale_price * x.qty)}</b>
+<button className="remove-item-btn" onClick={() => change(x.id, 0)} title="Supprimer">
+  🗑️
+</button>
+</div>)}</div> : <Empty icon={ShoppingCart} text="Votre panier est vide" />}
+    <div className="cart-bottom">
+  <label className="field">
+    <span>Client</span>
+    <select value={customer} onChange={e=>setCustomer(e.target.value)}>
+      <option value="">Client comptant</option>
+      {data.customers.map(c=><option value={c.id} key={c.id}>{c.name} · {c.phone}</option>)}
+    </select>
+  </label>
+
+  {/* Nouveaux champs pour saisir les coordonnées du client */}
+  <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+    <input 
+      type="text" 
+      placeholder="Nom du client" 
+      value={clientDetails.name} 
+      onChange={e => setClientDetails({...clientDetails, name: e.target.value})}
+      style={{ padding: "8px", borderRadius: "6px", border: "1px solid #ccc", fontSize: "14px", width: "100%" }}
+    />
+    <input 
+      type="tel" 
+      placeholder="Numéro de téléphone" 
+      value={clientDetails.phone} 
+      onChange={e => setClientDetails({...clientDetails, phone: e.target.value})}
+      style={{ padding: "8px", borderRadius: "6px", border: "1px solid #ccc", fontSize: "14px", width: "100%" }}
+    />
+    <input 
+      type="text" 
+      placeholder="Adresse de résidence" 
+      value={clientDetails.address} 
+      onChange={e => setClientDetails({...clientDetails, address: e.target.value})}
+      style={{ padding: "8px", borderRadius: "6px", border: "1px solid #ccc", fontSize: "14px", width: "100%" }}
+    />
+  </div>
+
+  <label className="field">
+    <span>Remise</span>
+    <input type="number" min="0" value={discount} onChange={e=>setDiscount(e.target.value)}/>
+  </label>
+  <div className="payment-grid">
+    {["Espèces","Wave","Orange Money","Crédit client"].map(p=><button key={p} className={payment===p?"active":""} onClick={()=>setPayment(p)}>{p}</button>)}
+  </div>
+  <div className="total-line">
+    <span>Sous-total</span><b>{money(subtotal)}</b>
+  </div>
+  <div className="total-line grand">
+    <span>Total à payer</span><strong>{money(total)}</strong>
+  </div>
+  <button className="btn btn-primary btn-lg full" disabled={!cart.length} onClick={checkout}>
+    <CheckCircle2 size={18}/> Encaisser {money(total)}
+  </button>
+  <div className="receipt-actions">
+    <button onClick={()=>setShowPrint(true)} disabled={!cart.length}><Printer size={15}/> Aperçu ticket</button>
+    <button><Download size={15}/> PDF</button>
+  </div>
+</div>
+</aside>
+</div>
+{showPrint && (
+  <ReceiptModal 
+    cart={currentSaleItems} 
+    total={total} 
+    merchant={data.merchant} 
+    clientDetails={clientDetails} 
+    close={()=>setShowPrint(false)} 
+  />
+)}
+</div>
 }
 
-function ReceiptModal({cart, total, merchant, close}) {
+function ReceiptModal({cart, total, merchant, clientDetails, close}) {
   const calculatedTotal = total || cart.reduce((sum, item) => sum + (item.qty * (item.sale_price || item.price || 0)), 0);
   const currentDate = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const invoiceNo = "FAC-" + Math.floor(100000 + Math.random() * 900000);
@@ -549,16 +1185,24 @@ function ReceiptModal({cart, total, merchant, close}) {
             </div>
 
             {/* Bloc d'informations de la facture */}
-            <div style={{display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "25px", background: "#f8fafc", padding: "12px 15px", borderRadius: "8px", border: "1px solid #e2e8f0"}}>
-              <div>
-                <div style={{marginBottom: "4px"}}><strong>N° de Facture :</strong> <span style={{color: "#0f766e"}}>{invoiceNo}</span></div>
-                <div><strong>Caisse :</strong> Principal</div>
-              </div>
-              <div style={{textAlign: "right"}}>
-                <div style={{marginBottom: "4px"}}><strong>Date :</strong> {currentDate}</div>
-                <div><strong>Client :</strong> Client comptant</div>
-              </div>
-            </div>
+<div style={{display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "25px", background: "#f8fafc", padding: "12px 15px", borderRadius: "8px", border: "1px solid #e2e8f0"}}>
+  <div>
+    <div style={{marginBottom: "4px"}}><strong>N° de Facture :</strong> <span style={{color: "#0f766e"}}>{invoiceNo}</span></div>
+    <div><strong>Caisse :</strong> Principal</div>
+  </div>
+  <div style={{textAlign: "right"}}>
+    <div style={{marginBottom: "4px"}}><strong>Date :</strong> {currentDate}</div>
+    <div>
+      <strong>Client :</strong> {clientDetails?.name || "Client comptant"} 
+      {clientDetails?.phone ? ` (${clientDetails.phone})` : ""}
+    </div>
+    {clientDetails?.address && (
+      <div style={{marginTop: "2px", color: "#64748b"}}>
+        <strong>Adresse :</strong> {clientDetails.address}
+      </div>
+    )}
+  </div>
+</div>
 
             {/* Tableau des articles structuré */}
             <div style={{marginBottom: "20px"}}>
@@ -628,8 +1272,69 @@ function Products({data,persist,remove}) {
   return <div><PageHead title="Produits & Stocks" subtitle="Votre catalogue, vos niveaux de stock et vos alertes." actions={<><label className="btn btn-secondary file-btn"><Upload size={16}/> Importer CSV<input type="file" accept=".csv" onChange={csv}/></label><button className="btn btn-primary" onClick={()=>open()}><Plus size={17}/> Ajouter un produit</button></>}/><div className="toolbar"><div className="search-input"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher par nom, SKU ou catégorie…"/></div><button className="filter-btn">Tous les produits <ChevronDown size={15}/></button><span className="toolbar-count">{filtered.length} produits</span></div><section className="panel table-panel"><table><thead><tr><th>Produit</th><th>SKU</th><th>Catégorie</th><th>Prix de vente</th><th>Stock</th><th>Seuil</th><th>Statut</th><th></th></tr></thead><tbody>{filtered.map(p=><tr key={p.id}><td><div className="table-product"><div className="mini-product">{p.name.slice(0,1)}</div><strong>{p.name}</strong></div></td><td>{p.sku||"—"}</td><td><span className="pill neutral">{p.category||"Non classé"}</span></td><td><b>{money(p.sale_price)}</b></td><td><b className={Number(p.stock)<=Number(p.alert_threshold)?"danger-text":""}>{number(p.stock)} {p.unit}</b></td><td>{number(p.alert_threshold)}</td><td><span className={"pill "+(p.is_active?"success":"neutral")}>{p.is_active?"Actif":"Inactif"}</span></td><td><button className="more-btn" onClick={()=>open(p)}><MoreHorizontal size={18}/></button></td></tr>)}</tbody></table></section>{show&&<ProductModal form={form} setForm={setForm} edit={edit} close={()=>setShow(false)} submit={submit} remove={remove}/>}</div>
 }
 
-function ProductModal({form,setForm,edit,close,submit,remove}) {
-  return <Modal title={edit?"Modifier le produit":"Nouveau produit"} close={close}><form onSubmit={submit}><div className="form-grid"><Field label="Nom du produit" value={form.name} onChange={v=>setForm({...form,name:v})} placeholder="Ex. Lit 2 places"/><Field label="SKU / Référence" value={form.sku} onChange={v=>setForm({...form,sku:v})} placeholder="LIT-200"/><Field label="Catégorie" value={form.category} onChange={v=>setForm({...form,category:v})} placeholder="Lits"/><Field label="Unité" value={form.unit} onChange={v=>setForm({...form,unit:v})} placeholder="unité"/><Field label="Prix de vente" type="number" value={form.sale_price} onChange={v=>setForm({...form,sale_price:v})}/><Field label="Prix d'achat" type="number" value={form.purchase_price} onChange={v=>setForm({...form,purchase_price:v})}/><Field label="Stock actuel" type="number" value={form.stock} onChange={v=>setForm({...form,stock:v})}/><Field label="Seuil d'alerte" type="number" value={form.alert_threshold} onChange={v=>setForm({...form,alert_threshold:v})}/></div><label className="field"><span>Description</span><textarea value={form.description||""} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Description courte…"/></label><div className="modal-actions">{edit&&<button type="button" className="btn btn-danger" onClick={()=>{remove("product",edit.id);close()}}>Supprimer</button>}<span/><button type="button" className="btn btn-secondary" onClick={close}>Annuler</button><button className="btn btn-primary">Enregistrer</button></div></form></Modal>
+function ProductModal({ form, setForm, edit, close, submit, remove, merchant }) {
+  const secteurActuel = merchant?.secteur || "Electronique et Electromenager";
+  const listeCategories = categoriesParSecteur[secteurActuel] || [
+    "Articles divers",
+    "Accessoires",
+    "Divers"
+  ];
+
+  return (
+    <Modal title={edit ? "Modifier le produit" : "Nouveau produit"} close={close}>
+      <form onSubmit={submit}>
+        <div className="form-grid">
+          <Field 
+            label="Nom du produit" 
+            value={form.name} 
+            onChange={v => setForm({...form, name: v})} 
+            placeholder="Ex. Smartphone..." 
+          />
+          <Field 
+            label="SKU / Référence" 
+            value={form.sku} 
+            onChange={v => setForm({...form, sku: v})} 
+            placeholder="REF-001" 
+          />
+          
+          {/* Liste déroulante dynamique par secteur */}
+          <label className="field">
+            <span>Catégorie ({secteurActuel})</span>
+            <select
+              value={form.category}
+              onChange={e => setForm({...form, category: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm"
+            >
+              <option value="">Sélectionner une catégorie...</option>
+              {listeCategories.map((cat, index) => (
+                <option key={index} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <Field label="Unité" value={form.unit} onChange={v => setForm({...form, unit: v})} placeholder="unité" />
+          <Field label="Prix de vente" type="number" value={form.sale_price} onChange={v => setForm({...form, sale_price: v})} />
+          <Field label="Prix d'achat" type="number" value={form.purchase_price} onChange={v => setForm({...form, purchase_price: v})} />
+          <Field label="Stock actuel" type="number" value={form.stock} onChange={v => setForm({...form, stock: v})} />
+          <Field label="Seuil d'alerte" type="number" value={form.alert_threshold || 5} onChange={v => setForm({...form, alert_threshold: v})} />
+        </div>
+        
+        <label className="field">
+          <span>Description</span>
+          <textarea value={form.description || ""} onChange={e => setForm({...form, description: e.target.value})} placeholder="Description courte…" />
+        </label>
+
+        <div className="modal-actions">
+          {edit && <button type="button" className="btn btn-danger" onClick={() => { remove("product", edit.id); close(); }}>Supprimer</button>}
+          <span />
+          <button type="button" className="btn btn-secondary" onClick={close}>Annuler</button>
+          <button className="btn btn-primary">Enregistrer</button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 function Customers({data,persist,remove}) {
